@@ -1,6 +1,21 @@
+type ChatMessage = {
+  role: "user" | "assistant";
+  text: string;
+};
+
 export async function POST(req: Request) {
   try {
-    const { message } = await req.json();
+    const { messages } = await req.json();
+
+    const input = (messages as ChatMessage[]).map((item) => ({
+      role: item.role,
+      content: [
+        {
+          type: "input_text",
+          text: item.text,
+        },
+      ],
+    }));
 
     const response = await fetch("https://api.openai.com/v1/responses", {
       method: "POST",
@@ -35,7 +50,7 @@ export async function POST(req: Request) {
 - Если данных недостаточно, прямо скажи, чего не хватает.
 - Ты называешь себя Mika AI.
         `,
-        input: message,
+        input,
       }),
     });
 
