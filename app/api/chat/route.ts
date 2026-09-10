@@ -11,6 +11,15 @@ type MemoryItem = {
   memory_value: string;
 };
 
+type BusinessMemory = {
+  memory_type: string;
+  name: string;
+  details: string;
+  amount: string | null;
+  currency: string | null;
+  status: string | null;
+};
+
 const sql = neon(process.env.DATABASE_URL!);
 
 async function prepareDatabase() {
@@ -34,6 +43,20 @@ async function prepareDatabase() {
       UNIQUE(memory_key)
     )
   `;
+
+  await sql`
+    CREATE TABLE IF NOT EXISTS mika_business_memory (
+      id SERIAL PRIMARY KEY,
+      memory_type TEXT NOT NULL,
+      name TEXT NOT NULL,
+      details TEXT NOT NULL,
+      amount NUMERIC,
+      currency TEXT,
+      status TEXT,
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      updated_at TIMESTAMPTZ DEFAULT NOW()
+    )
+  `;
 }
 
 async function getRecentMessages(): Promise<ChatMessage[]> {
@@ -53,7 +76,7 @@ async function getRecentMessages(): Promise<ChatMessage[]> {
     )
     .map((row) => ({
       role: row.role as "user" | "assistant",
-      text: row.text as string,
+      text: String(row.text),
     }));
 }
 
@@ -69,6 +92,30 @@ async function getLongTermMemory(): Promise<MemoryItem[]> {
     category: String(row.category),
     memory_key: String(row.memory_key),
     memory_value: String(row.memory_value),
+  }));
+}
+
+async function getBusinessMemory(): Promise<BusinessMemory[]> {
+  const rows = await sql`
+    SELECT
+      memory_type,
+      name,
+      details,
+      amount,
+      currency,
+      status
+    FROM mika_business_memory
+    ORDER BY updated_at DESC
+    LIMIT 100
+  `;
+
+  return rows.map((row) => ({
+    memory_type: String(row.memory_type),
+    name: String(row.name),
+    details: String(row.details),
+    amount: row.amount !== null ? String(row.amount) : null,
+    currency: row.currency !== null ? String(row.currency) : null,
+    status: row.status !== null ? String(row.status) : null,
   }));
 }
 
@@ -115,35 +162,28 @@ async function extractAndSaveMemories(
         body: JSON.stringify({
           model: "gpt-5.6-luna",
           instructions: `
-Ты — модуль памяти Mika AI.
+Ты — модуль долговременной памяти Mika AI.
 
 Определи, есть ли в сообщении пользователя информация,
 которую полезно помнить долго.
 
 Сохраняй:
-- имена клиентов, поставщиков и контактов;
-- компании и заводы;
-- цены и коммерческие договорённости;
-- заказы и товары;
-- рабочие предпочтения;
-- постоянные инструкции пользователя;
-- важные факты о проектах и бизнесе;
+- постоянные предпочтения;
+- важные факты;
+- инструкции пользователя;
+- информацию о проектах;
 - информацию, которую пользователь прямо просит запомнить.
 
-Не сохраняй:
-- обычные приветствия;
-- случайные фразы;
-- временные мелочи;
-- сам ответ ассистента как отдельный факт.
+Не сохраняй обычные приветствия и случайные временные фразы.
 
-Верни ТОЛЬКО JSON без пояснений:
+Верни ТОЛЬКО JSON:
 
 {
   "memories": [
     {
-      "category": "business",
-      "key": "короткий_понятный_ключ",
-      "value": "сам важный факт"
+      "category": "general",
+      "key": "короткий_ключ",
+      "value": "важный факт"
     }
   ]
 }
@@ -151,7 +191,7 @@ async function extractAndSaveMemories(
 Если запоминать нечего:
 {"memories":[]}
 
-Максимум 3 факта за одно сообщение.
+Максимум 3 факта.
           `,
           input: `
 Сообщение пользователя:
@@ -215,6 +255,169 @@ ${assistantReply}
   }
 }
 
+async function extractAndSaveBusinessMemory(
+  userMessage: string,
+  assistantReply: string
+) {
+  try {
+    const response = await fetch(
+      "https://api.openai.com/v1/responses",
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
+        },
+        body: JSON.stringify({
+          model: "gpt-5.6-luna",
+
+          instructions: `
+Ты — бизнес-модуль памяти Mika AI.
+
+Извлекай только конкретные рабочие данные.
+
+Допустимые типы:
+- client
+- supplier
+- product
+- price
+- order
+- agreement
+
+Примеры того, что нужно сохранять:
+- имя клиента и что ему нужно;
+- имя поставщика или завода;
+- название товара;
+- закупочная или продажная цена;
+- валюта;
+- заказ;
+- договорённость;
+- статус заказа или переговоров.
+
+Ничего не выдумывай.
+Если цена или валюта не указаны — ставь null.
+
+Верни ТОЛЬКО JSON:
+
+{
+  "items": [
+    {
+      "memory_type": "client",
+      "name": "Имя или название",
+      "details": "Что важно знать",
+      "amount": null,
+      "currency": null,
+      "status": null
+    }
+  ]
+}
+
+Если бизнес-данных нет:
+{"items":[]}
+
+Максимум 5 записей.
+          `,
+
+          input: `
+Сообщение пользователя:
+${userMessage}
+
+Ответ Mika AI:
+${assistantReply}
+          `,
+        }),
+      }
+    );
+
+    if (!response.ok) return;
+
+    const data = await response.json();
+    const raw = extractOutputText(data);
+
+    if (!raw) return;
+
+    const parsed = JSON.parse(cleanJson(raw));
+
+    if (!Array.isArray(parsed.items)) return;
+
+    for (const item of parsed.items.slice(0, 5)) {
+      if (
+        typeof item?.memory_type !== "string" ||
+        typeof item?.name !== "string" ||
+        typeof item?.details !== "string"
+      ) {
+        continue;
+      }
+
+      const memoryType = item.memory_type.trim();
+      const name = item.name.trim();
+      const details = item.details.trim();
+
+      if (!memoryType || !name || !details) continue;
+
+      const allowedTypes = [
+        "client",
+        "supplier",
+        "product",
+        "price",
+        "order",
+        "agreement",
+      ];
+
+      if (!allowedTypes.includes(memoryType)) continue;
+
+      const amount =
+        typeof item.amount === "number"
+          ? item.amount
+          : typeof item.amount === "string" &&
+              item.amount.trim() !== "" &&
+              !Number.isNaN(Number(item.amount))
+            ? Number(item.amount)
+            : null;
+
+      const currency =
+        typeof item.currency === "string" &&
+        item.currency.trim()
+          ? item.currency.trim()
+          : null;
+
+      const status =
+        typeof item.status === "string" &&
+        item.status.trim()
+          ? item.status.trim()
+          : null;
+
+      await sql`
+        INSERT INTO mika_business_memory
+          (
+            memory_type,
+            name,
+            details,
+            amount,
+            currency,
+            status
+          )
+        SELECT
+          ${memoryType},
+          ${name},
+          ${details},
+          ${amount},
+          ${currency},
+          ${status}
+        WHERE NOT EXISTS (
+          SELECT 1
+          FROM mika_business_memory
+          WHERE memory_type = ${memoryType}
+            AND name = ${name}
+            AND details = ${details}
+        )
+      `;
+    }
+  } catch (error) {
+    console.error("BUSINESS MEMORY ERROR:", error);
+  }
+}
+
 export async function POST(req: Request) {
   try {
     const body = await req.json();
@@ -258,8 +461,15 @@ export async function POST(req: Request) {
 
     await prepareDatabase();
 
-    const recentMessages = await getRecentMessages();
-    const longTermMemory = await getLongTermMemory();
+    const [
+      recentMessages,
+      longTermMemory,
+      businessMemory,
+    ] = await Promise.all([
+      getRecentMessages(),
+      getLongTermMemory(),
+      getBusinessMemory(),
+    ]);
 
     const memoryText =
       longTermMemory.length > 0
@@ -270,6 +480,24 @@ export async function POST(req: Request) {
             )
             .join("\n")
         : "Пока долговременных фактов нет.";
+
+    const businessText =
+      businessMemory.length > 0
+        ? businessMemory
+            .map((item) => {
+              const price =
+                item.amount && item.currency
+                  ? ` | сумма: ${item.amount} ${item.currency}`
+                  : "";
+
+              const status = item.status
+                ? ` | статус: ${item.status}`
+                : "";
+
+              return `- [${item.memory_type}] ${item.name}: ${item.details}${price}${status}`;
+            })
+            .join("\n")
+        : "Пока сохранённых бизнес-данных нет.";
 
     await saveMessage("user", currentUserMessage.text);
 
@@ -301,7 +529,8 @@ export async function POST(req: Request) {
 Помогай Микаилу в работе, бизнесе и повседневных задачах.
 
 Основной контекст:
-- медицинское оборудование и расходные материалы;
+- медицинское оборудование;
+- медицинские расходные материалы;
 - поставки из Китая;
 - международная логистика;
 - китайские заводы и поставщики;
@@ -310,20 +539,31 @@ export async function POST(req: Request) {
 - при переводе на китайский всегда также давай обратный перевод на русский;
 - коммерческие предложения;
 - расчёты;
-- рекламные и товарные тексты.
+- реклама и товарные тексты.
 
-ДОЛГОВРЕМЕННАЯ ПАМЯТЬ MIKA AI:
+ДОЛГОВРЕМЕННАЯ ПАМЯТЬ:
 ${memoryText}
 
-Используй эти факты естественно, когда они относятся к вопросу.
-Не говори, что ты "прочитал базу данных".
-Если новый факт противоречит старому, ориентируйся на более свежую информацию пользователя.
+БИЗНЕС-ПАМЯТЬ:
+${businessText}
+
+Используй бизнес-память при вопросах о:
+- клиентах;
+- поставщиках;
+- заводах;
+- товарах;
+- ценах;
+- заказах;
+- договорённостях.
+
+Не выдумывай отсутствующие данные.
+Если есть несколько цен одного товара, учитывай контекст и не утверждай, что одна из них актуальная, если это не ясно.
+Если пользователь сообщает новые данные, ориентируйся прежде всего на более свежую информацию.
 
 Стиль:
 - по умолчанию отвечай по-русски;
-- отвечай конкретно;
-- не выдумывай цены, характеристики и договорённости;
-- учитывай текущую переписку и долговременную память;
+- отвечай конкретно и понятно;
+- учитывай текущую переписку и память;
 - называй себя Mika AI.
           `,
 
@@ -361,10 +601,16 @@ ${memoryText}
 
     await saveMessage("assistant", reply);
 
-    await extractAndSaveMemories(
-      currentUserMessage.text,
-      reply
-    );
+    await Promise.all([
+      extractAndSaveMemories(
+        currentUserMessage.text,
+        reply
+      ),
+      extractAndSaveBusinessMemory(
+        currentUserMessage.text,
+        reply
+      ),
+    ]);
 
     return Response.json({ reply });
   } catch (error) {
