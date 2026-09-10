@@ -18,14 +18,20 @@ export async function POST(req: Request) {
 
     if (!response.ok) {
       return Response.json(
-        { error: data?.error?.message || "Ошибка OpenAI API" },
-        { status: 500 }
+        {
+          error: data?.error?.message || "Ошибка OpenAI API",
+        },
+        { status: response.status }
       );
     }
 
-    return Response.json({
-      reply: data.output_text,
-    });
+    const reply =
+      data?.output
+        ?.flatMap((item: any) => item?.content || [])
+        ?.find((item: any) => item?.type === "output_text")
+        ?.text || "";
+
+    return Response.json({ reply });
   } catch (error) {
     return Response.json(
       { error: "Ошибка сервера Mika AI" },
