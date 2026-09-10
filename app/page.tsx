@@ -2,28 +2,65 @@
 
 import { useState } from "react";
 
+type ChatMessage = {
+  role: "user" | "assistant";
+  text: string;
+};
+
 export default function Home() {
   const [message, setMessage] = useState("");
-  const [messages, setMessages] = useState([
+  const [messages, setMessages] = useState<ChatMessage[]>([
     {
       role: "assistant",
       text: "Привет! Я Mika AI. Напиши мне сообщение.",
     },
   ]);
+  const [loading, setLoading] = useState(false);
 
-  function sendMessage() {
-    if (!message.trim()) return;
+  async function sendMessage() {
+    const text = message.trim();
 
-    setMessages([
-      ...messages,
-      { role: "user", text: message },
-      {
-        role: "assistant",
-        text: "Пока я работаю в тестовом режиме. Следующим шагом подключим настоящий AI.",
-      },
-    ]);
+    if (!text || loading) return;
 
+    setMessages((prev) => [...prev, { role: "user", text }]);
     setMessage("");
+    setLoading(true);
+
+    try {
+      const response = await fetch("/api/chat", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          message: text,
+        }),
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data?.error || "Ошибка запроса");
+      }
+
+      setMessages((prev) => [
+        ...prev,
+        {
+          role: "assistant",
+          text: data.reply || "Я не получил ответ.",
+        },
+      ]);
+    } catch (error) {
+      setMessages((prev) => [
+        ...prev,
+        {
+          role: "assistant",
+          text: "Не удалось получить ответ. Попробуй ещё раз.",
+        },
+      ]);
+    } finally {
+      setLoading(false);
+    }
   }
 
   return (
@@ -46,6 +83,7 @@ export default function Home() {
         }}
       >
         <h1 style={{ marginBottom: "4px" }}>Mika AI</h1>
+
         <p style={{ color: "#666", marginTop: 0 }}>
           Персональный AI-ассистент
         </p>
@@ -75,12 +113,34 @@ export default function Home() {
                   background:
                     item.role === "user" ? "#111" : "#eef1f6",
                   color: item.role === "user" ? "white" : "#111",
+                  whiteSpace: "pre-wrap",
                 }}
               >
                 {item.text}
               </div>
             </div>
           ))}
+
+          {loading && (
+            <div
+              style={{
+                display: "flex",
+                justifyContent: "flex-start",
+                marginBottom: "12px",
+              }}
+            >
+              <div
+                style={{
+                  padding: "12px 15px",
+                  borderRadius: "18px",
+                  background: "#eef1f6",
+                  color: "#666",
+                }}
+              >
+                Mika AI думает...
+              </div>
+            </div>
+          )}
         </div>
 
         <div style={{ display: "flex", gap: "10px" }}>
@@ -88,9 +148,12 @@ export default function Home() {
             value={message}
             onChange={(e) => setMessage(e.target.value)}
             onKeyDown={(e) => {
-              if (e.key === "Enter") sendMessage();
+              if (e.key === "Enter") {
+                sendMessage();
+              }
             }}
             placeholder="Напишите сообщение..."
+            disabled={loading}
             style={{
               flex: 1,
               padding: "14px",
@@ -102,6 +165,7 @@ export default function Home() {
 
           <button
             onClick={sendMessage}
+            disabled={loading}
             style={{
               border: "none",
               borderRadius: "14px",
@@ -109,10 +173,11 @@ export default function Home() {
               background: "#111",
               color: "white",
               fontSize: "16px",
-              cursor: "pointer",
+              cursor: loading ? "default" : "pointer",
+              opacity: loading ? 0.6 : 1,
             }}
           >
-            Отправить
+            {loading ? "..." : "Отправить"}
           </button>
         </div>
       </div>
