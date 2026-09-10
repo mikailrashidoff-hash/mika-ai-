@@ -174,7 +174,7 @@ async function detectCRMCommand(message: string) {
           model: "gpt-5.6-luna",
 
           instructions: `
-Ты определяешь CRM-команды для Mika AI.
+Ты определяешь CRM-команды Mika AI.
 
 Доступные действия:
 
@@ -200,6 +200,9 @@ none
 → list_orders
 
 "Что ты помнишь про Николь?"
+→ lookup
+
+"Что по Артёму?"
 → lookup
 
 "Какие цены по сканерам?"
@@ -345,6 +348,8 @@ async function executeCRMCommand(command: any) {
       `;
     }
 
+    if (!rows.length) return null;
+
     return `Сохранённые цены:\n${formatBusinessRows(
       rows
     )}`;
@@ -370,20 +375,47 @@ async function executeCRMCommand(command: any) {
 
     if (!q) return null;
 
-    const pattern = `%${q}%`;
+    const words = q
+      .split(/[\s,;]+/i)
+      .map((word: string) => word.trim())
+      .filter(
+        (word: string) =>
+          word.length >= 3 &&
+          !["про", "что", "помнишь", "помню", "или"].includes(
+            word.toLowerCase()
+          )
+      );
 
-    const rows = await sql`
-      SELECT *
-      FROM mika_business_memory
-      WHERE
-        name ILIKE ${pattern}
-        OR details ILIKE ${pattern}
-      ORDER BY updated_at DESC
-      LIMIT 30
-    `;
+    let rows: any[] = [];
 
-    return `Вот что я нашёл по запросу «${q}»:\n${formatBusinessRows(
-      rows
+    for (const word of words) {
+      const pattern = `%${word}%`;
+
+      const found = await sql`
+        SELECT *
+        FROM mika_business_memory
+        WHERE
+          name ILIKE ${pattern}
+          OR details ILIKE ${pattern}
+        ORDER BY updated_at DESC
+        LIMIT 30
+      `;
+
+      rows.push(...found);
+    }
+
+    const uniqueRows = Array.from(
+      new Map(
+        rows.map((row: any) => [row.id, row])
+      ).values()
+    );
+
+    if (uniqueRows.length === 0) {
+      return null;
+    }
+
+    return `Вот что я помню по запросу «${q}»:\n${formatBusinessRows(
+      uniqueRows
     )}`;
   }
 
@@ -419,7 +451,7 @@ async function executeCRMCommand(command: any) {
     `;
 
     if (!rows.length) {
-      return `Я не нашёл запись по запросу «${q}».`;
+      return null;
     }
 
     return `Готово. Статус обновлён на «${newStatus}».\n${formatBusinessRows(
@@ -450,7 +482,7 @@ async function executeCRMCommand(command: any) {
     `;
 
     if (!rows.length) {
-      return `Цена по запросу «${q}» не найдена.`;
+      return null;
     }
 
     return `Удалил ${
@@ -484,14 +516,15 @@ async function extractAndSaveMemories(
           instructions: `
 Ты — модуль долговременной памяти Mika AI.
 
-Сохраняй важную информацию:
+Сохраняй:
 - постоянные предпочтения;
 - инструкции пользователя;
 - важные факты;
 - проекты;
-- информацию, которую пользователь просит запомнить.
+- людей и контакты;
+- информацию, которую пользователь прямо просит запомнить.
 
-Не сохраняй приветствия и случайные мелочи.
+Не сохраняй обычные приветствия и случайные мелочи.
 
 Верни ТОЛЬКО JSON:
 
@@ -800,8 +833,6 @@ export async function POST(req: Request) {
       currentUserMessage.text
     );
 
-    /* Сначала проверяем CRM-команду */
-
     const crmCommand = await detectCRMCommand(
       currentUserMessage.text
     );
@@ -821,8 +852,6 @@ export async function POST(req: Request) {
         });
       }
     }
-
-    /* Если это обычный разговор */
 
     const [
       recentMessages,
@@ -913,7 +942,20 @@ ${memoryText}
 БИЗНЕС-ПАМЯТЬ:
 ${businessText}
 
-Используй память естественно.
+При вопросах:
+"что ты помнишь"
+"кто такая"
+"кто такой"
+"что по"
+"что мы обсуждали"
+"сколько я говорил"
+"какая была цена"
+
+обязательно используй и долговременную память,
+и бизнес-память,
+и предыдущие сообщения.
+
+Не говори "ничего не найдено", если нужная информация есть хотя бы в одном источнике памяти.
 
 Не выдумывай:
 - цены;
