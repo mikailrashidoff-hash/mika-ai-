@@ -1,3 +1,4 @@
+
 {
   "name": "mika-ai",
   "version": "1.0.1",
@@ -12,5 +13,11 @@
     "react": "latest",
     "react-dom": "latest",
     "ai": "latest"
+  },
+  "devDependencies": {
+    "typescript": "latest",
+    "@types/node": "latest",
+    "@types/react": "latest",
+    "@types/react-dom": "latest"
   }
 }
