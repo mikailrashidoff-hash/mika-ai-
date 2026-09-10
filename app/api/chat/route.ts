@@ -12,6 +12,7 @@ type MemoryItem = {
 };
 
 type BusinessMemory = {
+  id?: number;
   memory_type: string;
   name: string;
   details: string;
@@ -59,6 +60,16 @@ async function prepareDatabase() {
   `;
 }
 
+async function saveMessage(
+  role: "user" | "assistant",
+  text: string
+) {
+  await sql`
+    INSERT INTO mika_messages (role, text)
+    VALUES (${role}, ${text})
+  `;
+}
+
 async function getRecentMessages(): Promise<ChatMessage[]> {
   const rows = await sql`
     SELECT role, text
@@ -71,7 +82,8 @@ async function getRecentMessages(): Promise<ChatMessage[]> {
     .reverse()
     .filter(
       (row) =>
-        (row.role === "user" || row.role === "assistant") &&
+        (row.role === "user" ||
+          row.role === "assistant") &&
         typeof row.text === "string"
     )
     .map((row) => ({
@@ -98,6 +110,7 @@ async function getLongTermMemory(): Promise<MemoryItem[]> {
 async function getBusinessMemory(): Promise<BusinessMemory[]> {
   const rows = await sql`
     SELECT
+      id,
       memory_type,
       name,
       details,
@@ -106,35 +119,32 @@ async function getBusinessMemory(): Promise<BusinessMemory[]> {
       status
     FROM mika_business_memory
     ORDER BY updated_at DESC
-    LIMIT 100
+    LIMIT 150
   `;
 
   return rows.map((row) => ({
+    id: Number(row.id),
     memory_type: String(row.memory_type),
     name: String(row.name),
     details: String(row.details),
-    amount: row.amount !== null ? String(row.amount) : null,
-    currency: row.currency !== null ? String(row.currency) : null,
-    status: row.status !== null ? String(row.status) : null,
+    amount:
+      row.amount !== null ? String(row.amount) : null,
+    currency:
+      row.currency !== null
+        ? String(row.currency)
+        : null,
+    status:
+      row.status !== null ? String(row.status) : null,
   }));
-}
-
-async function saveMessage(
-  role: "user" | "assistant",
-  text: string
-) {
-  await sql`
-    INSERT INTO mika_messages (role, text)
-    VALUES (${role}, ${text})
-  `;
 }
 
 function extractOutputText(data: any): string {
   return (
     data?.output
       ?.flatMap((item: any) => item?.content || [])
-      ?.find((item: any) => item?.type === "output_text")
-      ?.text || ""
+      ?.find(
+        (item: any) => item?.type === "output_text"
+      )?.text || ""
   );
 }
 
@@ -145,6 +155,315 @@ function cleanJson(text: string) {
     .replace(/\s*```$/i, "")
     .trim();
 }
+
+/* ============================= */
+/* CRM-КОМАНДЫ                    */
+/* ============================= */
+
+async function detectCRMCommand(message: string) {
+  try {
+    const response = await fetch(
+      "https://api.openai.com/v1/responses",
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
+        },
+        body: JSON.stringify({
+          model: "gpt-5.6-luna",
+
+          instructions: `
+Ты определяешь CRM-команды для Mika AI.
+
+Доступные действия:
+
+list_clients
+list_suppliers
+list_products
+list_prices
+list_orders
+lookup
+update_status
+delete_price
+none
+
+Примеры:
+
+"Покажи всех клиентов"
+→ list_clients
+
+"Какие у меня поставщики?"
+→ list_suppliers
+
+"Какие заказы сейчас есть?"
+→ list_orders
+
+"Что ты помнишь про Николь?"
+→ lookup
+
+"Какие цены по сканерам?"
+→ list_prices
+
+"Обнови статус заказа Артёма на оплачено"
+→ update_status
+
+"Удали старую цену сканера"
+→ delete_price
+
+Обычный разговор:
+→ none
+
+Верни ТОЛЬКО JSON:
+
+{
+  "action": "none",
+  "query": null,
+  "status": null
+}
+
+Для поиска положи имя или товар в query.
+Для update_status положи новый статус в status.
+          `,
+
+          input: message,
+        }),
+      }
+    );
+
+    if (!response.ok) return null;
+
+    const data = await response.json();
+    const raw = extractOutputText(data);
+
+    if (!raw) return null;
+
+    return JSON.parse(cleanJson(raw));
+  } catch {
+    return null;
+  }
+}
+
+function formatBusinessRows(rows: any[]) {
+  if (!rows.length) {
+    return "Ничего не найдено.";
+  }
+
+  return rows
+    .map((row, index) => {
+      const amount =
+        row.amount !== null &&
+        row.amount !== undefined
+          ? ` | Цена: ${row.amount}${
+              row.currency
+                ? ` ${row.currency}`
+                : ""
+            }`
+          : "";
+
+      const status = row.status
+        ? ` | Статус: ${row.status}`
+        : "";
+
+      return `${index + 1}. ${row.name} — ${
+        row.details
+      }${amount}${status}`;
+    })
+    .join("\n");
+}
+
+async function executeCRMCommand(command: any) {
+  if (!command?.action) return null;
+
+  if (command.action === "list_clients") {
+    const rows = await sql`
+      SELECT *
+      FROM mika_business_memory
+      WHERE memory_type = 'client'
+      ORDER BY updated_at DESC
+      LIMIT 100
+    `;
+
+    return `Клиенты:\n${formatBusinessRows(rows)}`;
+  }
+
+  if (command.action === "list_suppliers") {
+    const rows = await sql`
+      SELECT *
+      FROM mika_business_memory
+      WHERE memory_type = 'supplier'
+      ORDER BY updated_at DESC
+      LIMIT 100
+    `;
+
+    return `Поставщики:\n${formatBusinessRows(
+      rows
+    )}`;
+  }
+
+  if (command.action === "list_products") {
+    const rows = await sql`
+      SELECT *
+      FROM mika_business_memory
+      WHERE memory_type = 'product'
+      ORDER BY updated_at DESC
+      LIMIT 100
+    `;
+
+    return `Товары:\n${formatBusinessRows(rows)}`;
+  }
+
+  if (command.action === "list_prices") {
+    const q =
+      typeof command.query === "string"
+        ? command.query.trim()
+        : "";
+
+    let rows;
+
+    if (q) {
+      const pattern = `%${q}%`;
+
+      rows = await sql`
+        SELECT *
+        FROM mika_business_memory
+        WHERE memory_type = 'price'
+          AND (
+            name ILIKE ${pattern}
+            OR details ILIKE ${pattern}
+          )
+        ORDER BY updated_at DESC
+        LIMIT 100
+      `;
+    } else {
+      rows = await sql`
+        SELECT *
+        FROM mika_business_memory
+        WHERE memory_type = 'price'
+        ORDER BY updated_at DESC
+        LIMIT 100
+      `;
+    }
+
+    return `Сохранённые цены:\n${formatBusinessRows(
+      rows
+    )}`;
+  }
+
+  if (command.action === "list_orders") {
+    const rows = await sql`
+      SELECT *
+      FROM mika_business_memory
+      WHERE memory_type = 'order'
+      ORDER BY updated_at DESC
+      LIMIT 100
+    `;
+
+    return `Заказы:\n${formatBusinessRows(rows)}`;
+  }
+
+  if (command.action === "lookup") {
+    const q =
+      typeof command.query === "string"
+        ? command.query.trim()
+        : "";
+
+    if (!q) return null;
+
+    const pattern = `%${q}%`;
+
+    const rows = await sql`
+      SELECT *
+      FROM mika_business_memory
+      WHERE
+        name ILIKE ${pattern}
+        OR details ILIKE ${pattern}
+      ORDER BY updated_at DESC
+      LIMIT 30
+    `;
+
+    return `Вот что я нашёл по запросу «${q}»:\n${formatBusinessRows(
+      rows
+    )}`;
+  }
+
+  if (command.action === "update_status") {
+    const q =
+      typeof command.query === "string"
+        ? command.query.trim()
+        : "";
+
+    const newStatus =
+      typeof command.status === "string"
+        ? command.status.trim()
+        : "";
+
+    if (!q || !newStatus) {
+      return "Не смог определить заказ или новый статус.";
+    }
+
+    const pattern = `%${q}%`;
+
+    const rows = await sql`
+      UPDATE mika_business_memory
+      SET
+        status = ${newStatus},
+        updated_at = NOW()
+      WHERE
+        memory_type IN ('order', 'client', 'agreement')
+        AND (
+          name ILIKE ${pattern}
+          OR details ILIKE ${pattern}
+        )
+      RETURNING *
+    `;
+
+    if (!rows.length) {
+      return `Я не нашёл запись по запросу «${q}».`;
+    }
+
+    return `Готово. Статус обновлён на «${newStatus}».\n${formatBusinessRows(
+      rows
+    )}`;
+  }
+
+  if (command.action === "delete_price") {
+    const q =
+      typeof command.query === "string"
+        ? command.query.trim()
+        : "";
+
+    if (!q) {
+      return "Уточни, цену какого товара нужно удалить.";
+    }
+
+    const pattern = `%${q}%`;
+
+    const rows = await sql`
+      DELETE FROM mika_business_memory
+      WHERE memory_type = 'price'
+        AND (
+          name ILIKE ${pattern}
+          OR details ILIKE ${pattern}
+        )
+      RETURNING *
+    `;
+
+    if (!rows.length) {
+      return `Цена по запросу «${q}» не найдена.`;
+    }
+
+    return `Удалил ${
+      rows.length
+    } записей с ценой по запросу «${q}».`;
+  }
+
+  return null;
+}
+
+/* ============================= */
+/* ОБЫЧНАЯ ДОЛГОВРЕМЕННАЯ ПАМЯТЬ */
+/* ============================= */
 
 async function extractAndSaveMemories(
   userMessage: string,
@@ -161,20 +480,18 @@ async function extractAndSaveMemories(
         },
         body: JSON.stringify({
           model: "gpt-5.6-luna",
+
           instructions: `
 Ты — модуль долговременной памяти Mika AI.
 
-Определи, есть ли в сообщении пользователя информация,
-которую полезно помнить долго.
-
-Сохраняй:
+Сохраняй важную информацию:
 - постоянные предпочтения;
-- важные факты;
 - инструкции пользователя;
-- информацию о проектах;
-- информацию, которую пользователь прямо просит запомнить.
+- важные факты;
+- проекты;
+- информацию, которую пользователь просит запомнить.
 
-Не сохраняй обычные приветствия и случайные временные фразы.
+Не сохраняй приветствия и случайные мелочи.
 
 Верни ТОЛЬКО JSON:
 
@@ -188,16 +505,17 @@ async function extractAndSaveMemories(
   ]
 }
 
-Если запоминать нечего:
+Если нечего сохранять:
 {"memories":[]}
 
 Максимум 3 факта.
           `,
+
           input: `
-Сообщение пользователя:
+Пользователь:
 ${userMessage}
 
-Ответ Mika AI:
+Mika AI:
 ${assistantReply}
           `,
         }),
@@ -255,6 +573,10 @@ ${assistantReply}
   }
 }
 
+/* ============================= */
+/* БИЗНЕС-ПАМЯТЬ                  */
+/* ============================= */
+
 async function extractAndSaveBusinessMemory(
   userMessage: string,
   assistantReply: string
@@ -274,28 +596,28 @@ async function extractAndSaveBusinessMemory(
           instructions: `
 Ты — бизнес-модуль памяти Mika AI.
 
-Извлекай только конкретные рабочие данные.
+Извлекай конкретные рабочие данные.
 
 Допустимые типы:
-- client
-- supplier
-- product
-- price
-- order
-- agreement
+client
+supplier
+product
+price
+order
+agreement
 
-Примеры того, что нужно сохранять:
-- имя клиента и что ему нужно;
-- имя поставщика или завода;
-- название товара;
-- закупочная или продажная цена;
-- валюта;
-- заказ;
-- договорённость;
-- статус заказа или переговоров.
+Сохраняй:
+- клиентов;
+- поставщиков;
+- заводы;
+- товары;
+- цены;
+- валюту;
+- заказы;
+- договорённости;
+- статусы.
 
 Ничего не выдумывай.
-Если цена или валюта не указаны — ставь null.
 
 Верни ТОЛЬКО JSON:
 
@@ -303,8 +625,8 @@ async function extractAndSaveBusinessMemory(
   "items": [
     {
       "memory_type": "client",
-      "name": "Имя или название",
-      "details": "Что важно знать",
+      "name": "Название",
+      "details": "Детали",
       "amount": null,
       "currency": null,
       "status": null
@@ -312,17 +634,17 @@ async function extractAndSaveBusinessMemory(
   ]
 }
 
-Если бизнес-данных нет:
+Если данных нет:
 {"items":[]}
 
 Максимум 5 записей.
           `,
 
           input: `
-Сообщение пользователя:
+Пользователь:
 ${userMessage}
 
-Ответ Mika AI:
+Mika AI:
 ${assistantReply}
           `,
         }),
@@ -340,6 +662,15 @@ ${assistantReply}
 
     if (!Array.isArray(parsed.items)) return;
 
+    const allowedTypes = [
+      "client",
+      "supplier",
+      "product",
+      "price",
+      "order",
+      "agreement",
+    ];
+
     for (const item of parsed.items.slice(0, 5)) {
       if (
         typeof item?.memory_type !== "string" ||
@@ -349,22 +680,16 @@ ${assistantReply}
         continue;
       }
 
-      const memoryType = item.memory_type.trim();
+      const memoryType =
+        item.memory_type.trim().toLowerCase();
+
       const name = item.name.trim();
       const details = item.details.trim();
 
-      if (!memoryType || !name || !details) continue;
+      if (!allowedTypes.includes(memoryType))
+        continue;
 
-      const allowedTypes = [
-        "client",
-        "supplier",
-        "product",
-        "price",
-        "order",
-        "agreement",
-      ];
-
-      if (!allowedTypes.includes(memoryType)) continue;
+      if (!name || !details) continue;
 
       const amount =
         typeof item.amount === "number"
@@ -414,9 +739,16 @@ ${assistantReply}
       `;
     }
   } catch (error) {
-    console.error("BUSINESS MEMORY ERROR:", error);
+    console.error(
+      "BUSINESS MEMORY ERROR:",
+      error
+    );
   }
 }
+
+/* ============================= */
+/* ГЛАВНЫЙ CHAT API               */
+/* ============================= */
 
 export async function POST(req: Request) {
   try {
@@ -435,7 +767,7 @@ export async function POST(req: Request) {
       ];
     }
 
-    if (messages.length === 0) {
+    if (!messages.length) {
       return Response.json(
         { error: "Сообщения не переданы" },
         { status: 400 }
@@ -446,20 +778,51 @@ export async function POST(req: Request) {
       .reverse()
       .find(
         (item) =>
-          item &&
-          item.role === "user" &&
+          item?.role === "user" &&
           typeof item.text === "string" &&
           item.text.trim()
       );
 
     if (!currentUserMessage) {
       return Response.json(
-        { error: "Сообщение пользователя не найдено" },
+        {
+          error:
+            "Сообщение пользователя не найдено",
+        },
         { status: 400 }
       );
     }
 
     await prepareDatabase();
+
+    await saveMessage(
+      "user",
+      currentUserMessage.text
+    );
+
+    /* Сначала проверяем CRM-команду */
+
+    const crmCommand = await detectCRMCommand(
+      currentUserMessage.text
+    );
+
+    if (
+      crmCommand &&
+      crmCommand.action !== "none"
+    ) {
+      const crmReply =
+        await executeCRMCommand(crmCommand);
+
+      if (crmReply) {
+        await saveMessage("assistant", crmReply);
+
+        return Response.json({
+          reply: crmReply,
+        });
+      }
+    }
+
+    /* Если это обычный разговор */
 
     const [
       recentMessages,
@@ -479,27 +842,29 @@ export async function POST(req: Request) {
                 `- [${item.category}] ${item.memory_value}`
             )
             .join("\n")
-        : "Пока долговременных фактов нет.";
+        : "Пока долговременной памяти нет.";
 
     const businessText =
       businessMemory.length > 0
         ? businessMemory
             .map((item) => {
-              const price =
-                item.amount && item.currency
-                  ? ` | сумма: ${item.amount} ${item.currency}`
+              const amount =
+                item.amount !== null
+                  ? ` | сумма: ${item.amount}${
+                      item.currency
+                        ? ` ${item.currency}`
+                        : ""
+                    }`
                   : "";
 
               const status = item.status
                 ? ` | статус: ${item.status}`
                 : "";
 
-              return `- [${item.memory_type}] ${item.name}: ${item.details}${price}${status}`;
+              return `- [${item.memory_type}] ${item.name}: ${item.details}${amount}${status}`;
             })
             .join("\n")
-        : "Пока сохранённых бизнес-данных нет.";
-
-    await saveMessage("user", currentUserMessage.text);
+        : "Пока бизнес-данных нет.";
 
     const input = [
       ...recentMessages.map((item) => ({
@@ -526,20 +891,21 @@ export async function POST(req: Request) {
           instructions: `
 Ты — Mika AI, персональный AI-ассистент Микаила.
 
-Помогай Микаилу в работе, бизнесе и повседневных задачах.
-
-Основной контекст:
+Основные задачи:
 - медицинское оборудование;
-- медицинские расходные материалы;
-- поставки из Китая;
+- расходные материалы;
+- Китай;
+- заводы и поставщики;
 - международная логистика;
-- китайские заводы и поставщики;
-- работа с клиентами;
-- русский и китайский языки;
-- при переводе на китайский всегда также давай обратный перевод на русский;
+- клиенты;
+- товары;
+- заказы;
+- цены;
 - коммерческие предложения;
-- расчёты;
-- реклама и товарные тексты.
+- переводы русский ↔ китайский;
+- при переводе на китайский всегда давай обратный перевод на русский;
+- рекламные тексты;
+- расчёты.
 
 ДОЛГОВРЕМЕННАЯ ПАМЯТЬ:
 ${memoryText}
@@ -547,24 +913,21 @@ ${memoryText}
 БИЗНЕС-ПАМЯТЬ:
 ${businessText}
 
-Используй бизнес-память при вопросах о:
-- клиентах;
-- поставщиках;
-- заводах;
-- товарах;
-- ценах;
-- заказах;
-- договорённостях.
+Используй память естественно.
 
-Не выдумывай отсутствующие данные.
-Если есть несколько цен одного товара, учитывай контекст и не утверждай, что одна из них актуальная, если это не ясно.
-Если пользователь сообщает новые данные, ориентируйся прежде всего на более свежую информацию.
+Не выдумывай:
+- цены;
+- клиентов;
+- договорённости;
+- характеристики;
+- статусы.
 
-Стиль:
-- по умолчанию отвечай по-русски;
-- отвечай конкретно и понятно;
-- учитывай текущую переписку и память;
-- называй себя Mika AI.
+Если новая информация противоречит старой,
+предпочитай более свежую информацию пользователя.
+
+По умолчанию отвечай по-русски.
+Отвечай конкретно и понятно.
+Называй себя Mika AI.
           `,
 
           input,
@@ -575,16 +938,11 @@ ${businessText}
     const data = await response.json();
 
     if (!response.ok) {
-      console.error(
-        "OPENAI ERROR:",
-        JSON.stringify(data)
-      );
-
       return Response.json(
         {
           error:
             data?.error?.message ||
-            "Ошибка при обращении к OpenAI",
+            "Ошибка OpenAI",
         },
         { status: response.status }
       );
@@ -594,7 +952,10 @@ ${businessText}
 
     if (!reply) {
       return Response.json(
-        { error: "Mika AI не получил текст ответа" },
+        {
+          error:
+            "Mika AI не получил текст ответа",
+        },
         { status: 500 }
       );
     }
@@ -606,6 +967,7 @@ ${businessText}
         currentUserMessage.text,
         reply
       ),
+
       extractAndSaveBusinessMemory(
         currentUserMessage.text,
         reply
@@ -614,7 +976,10 @@ ${businessText}
 
     return Response.json({ reply });
   } catch (error) {
-    console.error("MIKA AI SERVER ERROR:", error);
+    console.error(
+      "MIKA AI SERVER ERROR:",
+      error
+    );
 
     return Response.json(
       {
