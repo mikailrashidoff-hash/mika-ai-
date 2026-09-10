@@ -1,11 +1,13 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 type ChatMessage = {
   role: "user" | "assistant";
   text: string;
 };
+
+const STORAGE_KEY = "mika-ai-chat";
 
 export default function Home() {
   const [message, setMessage] = useState("");
@@ -16,6 +18,35 @@ export default function Home() {
     },
   ]);
   const [loading, setLoading] = useState(false);
+  const [loaded, setLoaded] = useState(false);
+
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem(STORAGE_KEY);
+
+      if (saved) {
+        const parsed = JSON.parse(saved);
+
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          setMessages(parsed);
+        }
+      }
+    } catch {
+      // Если сохранённая история повреждена, просто начинаем новый чат.
+    } finally {
+      setLoaded(true);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!loaded) return;
+
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(messages));
+    } catch {
+      // Если браузер не разрешил сохранение, чат всё равно продолжит работать.
+    }
+  }, [messages, loaded]);
 
   async function sendMessage() {
     const text = message.trim();
@@ -55,7 +86,7 @@ export default function Home() {
           text: data.reply || "Я не получил ответ.",
         },
       ]);
-    } catch (error) {
+    } catch {
       setMessages((prev) => [
         ...prev,
         {
@@ -66,6 +97,21 @@ export default function Home() {
     } finally {
       setLoading(false);
     }
+  }
+
+  function clearChat() {
+    const freshChat: ChatMessage[] = [
+      {
+        role: "assistant",
+        text: "Привет! Я Mika AI. Начинаем новый диалог.",
+      },
+    ];
+
+    setMessages(freshChat);
+
+    try {
+      localStorage.removeItem(STORAGE_KEY);
+    } catch {}
   }
 
   return (
@@ -87,11 +133,34 @@ export default function Home() {
           boxShadow: "0 10px 35px rgba(0,0,0,0.08)",
         }}
       >
-        <h1 style={{ marginBottom: "4px" }}>Mika AI</h1>
+        <div
+          style={{
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "flex-start",
+            gap: "12px",
+          }}
+        >
+          <div>
+            <h1 style={{ marginBottom: "4px" }}>Mika AI</h1>
+            <p style={{ color: "#666", marginTop: 0 }}>
+              Персональный AI-ассистент
+            </p>
+          </div>
 
-        <p style={{ color: "#666", marginTop: 0 }}>
-          Персональный AI-ассистент
-        </p>
+          <button
+            onClick={clearChat}
+            style={{
+              border: "1px solid #ddd",
+              borderRadius: "12px",
+              padding: "9px 12px",
+              background: "white",
+              cursor: "pointer",
+            }}
+          >
+            Новый чат
+          </button>
+        </div>
 
         <div
           style={{
