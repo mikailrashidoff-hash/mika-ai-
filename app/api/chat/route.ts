@@ -5,12 +5,39 @@ type ChatMessage = {
 
 export async function POST(req: Request) {
   try {
-    const { messages } = await req.json();
+    const body = await req.json();
 
-    const input = (messages as ChatMessage[]).map((item) => ({
-      role: item.role,
-      content: item.text,
-    }));
+    let messages: ChatMessage[] = [];
+
+    if (Array.isArray(body.messages)) {
+      messages = body.messages;
+    } else if (typeof body.message === "string") {
+      messages = [
+        {
+          role: "user",
+          text: body.message,
+        },
+      ];
+    }
+
+    if (messages.length === 0) {
+      return Response.json(
+        { error: "Сообщения не переданы" },
+        { status: 400 }
+      );
+    }
+
+    const input = messages
+      .filter(
+        (item) =>
+          item &&
+          (item.role === "user" || item.role === "assistant") &&
+          typeof item.text === "string"
+      )
+      .map((item) => ({
+        role: item.role,
+        content: item.text,
+      }));
 
     const response = await fetch("https://api.openai.com/v1/responses", {
       method: "POST",
@@ -36,9 +63,9 @@ export async function POST(req: Request) {
 
 Стиль:
 - по умолчанию отвечай по-русски;
-- отвечай конкретно и без лишней воды;
-- не выдумывай факты, цены или договорённости;
-- помни контекст текущего диалога;
+- отвечай конкретно;
+- не выдумывай цены, характеристики и договорённости;
+- учитывай контекст текущей переписки;
 - называй себя Mika AI.
         `,
         input,
@@ -48,8 +75,12 @@ export async function POST(req: Request) {
     const data = await response.json();
 
     if (!response.ok) {
+      console.error("OPENAI ERROR:", JSON.stringify(data));
+
       return Response.json(
-        { error: data?.error?.message || "Ошибка OpenAI API" },
+        {
+          error: data?.error?.message || "Ошибка OpenAI API",
+        },
         { status: response.status }
       );
     }
@@ -61,9 +92,16 @@ export async function POST(req: Request) {
         ?.text || "";
 
     return Response.json({ reply });
-  } catch {
+  } catch (error) {
+    console.error("MIKA AI SERVER ERROR:", error);
+
     return Response.json(
-      { error: "Ошибка сервера Mika AI" },
+      {
+        error:
+          error instanceof Error
+            ? error.message
+            : "Ошибка сервера Mika AI",
+      },
       { status: 500 }
     );
   }
