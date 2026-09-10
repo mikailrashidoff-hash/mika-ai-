@@ -22,7 +22,12 @@ export default function Home() {
 
     if (!text || loading) return;
 
-    setMessages((prev) => [...prev, { role: "user", text }]);
+    const updatedMessages: ChatMessage[] = [
+      ...messages,
+      { role: "user", text },
+    ];
+
+    setMessages(updatedMessages);
     setMessage("");
     setLoading(true);
 
@@ -33,7 +38,7 @@ export default function Home() {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          message: text,
+          messages: updatedMessages,
         }),
       });
 
