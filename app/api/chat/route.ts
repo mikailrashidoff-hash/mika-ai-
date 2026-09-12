@@ -80,7 +80,27 @@ async function saveMessage(
     VALUES (${role}, ${text})
   `;
 }
-
+async function saveProductRequest(
+  requestText: string,
+  productName: string | null,
+  specifications: string | null,
+  status: string
+) {
+  await sql`
+    INSERT INTO mika_product_requests (
+      request_text,
+      product_name,
+      specifications,
+      status
+    )
+    VALUES (
+      ${requestText},
+      ${productName},
+      ${specifications},
+      ${status}
+    )
+  `;
+}
 async function getRecentMessages(): Promise<ChatMessage[]> {
   const rows = await sql`
     SELECT role, text
