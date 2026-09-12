@@ -58,8 +58,19 @@ async function prepareDatabase() {
       updated_at TIMESTAMPTZ DEFAULT NOW()
     )
   `;
-}
 
+await sql`
+  CREATE TABLE IF NOT EXISTS mika_product_requests (
+    id SERIAL PRIMARY KEY,
+    request_text TEXT NOT NULL,
+    product_name TEXT,
+    specifications TEXT,
+    status TEXT NOT NULL DEFAULT 'waiting',
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+  )
+`;
+  }
 async function saveMessage(
   role: "user" | "assistant",
   text: string
