@@ -1,5 +1,6 @@
 "use client";
-
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import { useEffect, useState } from "react";
 
 type ChatMessage = {
@@ -190,7 +191,9 @@ export default function Home() {
                   whiteSpace: "pre-wrap",
                 }}
               >
-                {item.text}
+                <ReactMarkdown remarkPlugins={[remarkGfm]}>
+  {item.text}
+</ReactMarkdown>
               </div>
             </div>
           ))}
