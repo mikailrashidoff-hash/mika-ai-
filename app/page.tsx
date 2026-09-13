@@ -199,27 +199,58 @@ export default function Home() {
           ))}
 
           {loading && (
-            <div
-              style={{
-                display: "flex",
-                justifyContent: "flex-start",
-                marginBottom: "12px",
-              }}
-            >
-              <div
-                style={{
-                  padding: "12px 15px",
-                  borderRadius: "18px",
-                  background: "#eef1f6",
-                  color: "#666",
-                }}
-              >
-                Mika AI думает...
-              </div>
-            </div>
-          )}
-        </div>
+  <div
+    style={{
+      display: "flex",
+      justifyContent: "flex-start",
+      marginBottom: "14px",
+      alignItems: "center",
+      gap: "10px",
+    }}
+  >
+    <div
+      style={{
+        width: "38px",
+        height: "38px",
+        borderRadius: "50%",
+        background: "linear-gradient(135deg, #111 0%, #444 100%)",
+        color: "white",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        fontWeight: 700,
+        fontSize: "14px",
+        boxShadow: "0 6px 18px rgba(0,0,0,0.16)",
+        animation: "mikaPulse 1.6s ease-in-out infinite",
+        flexShrink: 0,
+      }}
+    >
+      M
+    </div>
 
+    <div
+      style={{
+        padding: "12px 16px",
+        borderRadius: "18px",
+        background: "#eef1f6",
+        color: "#555",
+        display: "flex",
+        alignItems: "center",
+        gap: "8px",
+        minHeight: "44px",
+      }}
+    >
+      <span style={{ fontWeight: 600 }}>Mika думает</span>
+
+      <span style={{ display: "inline-flex", gap: "4px" }}>
+        <span className="mika-dot" />
+        <span className="mika-dot" />
+        <span className="mika-dot" />
+      </span>
+    </div>
+  </div>
+)}
+            
         <div style={{ display: "flex", gap: "10px" }}>
           <input
             value={message}
@@ -257,7 +288,79 @@ export default function Home() {
             {loading ? "..." : "Отправить"}
           </button>
         </div>
+  
       </div>
-    </main>
+       <style>{`
+
+      @keyframes mikaPulse {
+
+        0%, 100% {
+
+          transform: scale(1);
+
+          opacity: 0.9;
+
+        }
+
+        50% {
+
+          transform: scale(1.08);
+
+          opacity: 1;
+
+        }
+
+      }
+
+      .mika-dot {
+
+        width: 6px;
+
+        height: 6px;
+
+        border-radius: 50%;
+
+        background: #777;
+
+        display: inline-block;
+
+        animation: mikaDot 1.2s infinite ease-in-out;
+
+      }
+
+      .mika-dot:nth-child(2) {
+
+        animation-delay: 0.15s;
+
+      }
+
+      .mika-dot:nth-child(3) {
+
+        animation-delay: 0.3s;
+
+      }
+
+      @keyframes mikaDot {
+
+        0%, 80%, 100% {
+
+          transform: translateY(0);
+
+          opacity: 0.35;
+
+        }
+
+        40% {
+
+          transform: translateY(-4px);
+
+          opacity: 1;
+
+        }
+
+      }
+
+    `}</style>
+      </main>
   );
 }
