@@ -12,7 +12,9 @@
     "react": "latest",
     "react-dom": "latest",
     "ai": "latest",
-    "@neondatabase/serverless": "latest"
+    "@neondatabase/serverless": "latest",
+"react-markdown": "latest",
+"remark-gfm": "latest"
   },
   "devDependencies": {
     "typescript": "latest",
