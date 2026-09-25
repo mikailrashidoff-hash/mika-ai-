@@ -14,10 +14,144 @@ export async function GET(request: Request) {
   return new Response("Forbidden", { status: 403 });
 }
 
+
 export async function POST(request: Request) {
-  const body = await request.json();
+  try {
+    const body = await request.json();
 
-  console.log("WhatsApp webhook:", JSON.stringify(body));
+    const value = body?.entry?.[0]?.changes?.[0]?.value;
+    const message = value?.messages?.[0];
 
-  return new Response("EVENT_RECEIVED", { status: 200 });
+    // Если это не входящее сообщение — просто подтверждаем получение
+    if (!message) {
+      return new Response("EVENT_RECEIVED", { status: 200 });
+    }
+
+    const from = message.from;
+    const messageType = message.type;
+
+    // Пока работаем только с текстом
+    if (messageType !== "text") {
+      return new Response("EVENT_RECEIVED", { status: 200 });
+    }
+
+    const userText = message?.text?.body?.trim();
+
+    if (!userText) {
+      return new Response("EVENT_RECEIVED", { status: 200 });
+    }
+
+    console.log("WhatsApp message:", {
+      from,
+      text: userText,
+    });
+
+    // Отправляем сообщение в Mika AI
+    const chatUrl = new URL("/api/chat", request.url);
+
+    const chatResponse = await fetch(chatUrl, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        message: userText,
+        userId: from,
+        channel: "whatsapp",
+      }),
+    });
+
+    if (!chatResponse.ok) {
+      console.error(
+        "Mika AI error:",
+        chatResponse.status,
+        await chatResponse.text()
+      );
+
+      return new Response("EVENT_RECEIVED", { status: 200 });
+    }
+
+    const rawAnswer = await chatResponse.text();
+
+    let answer = rawAnswer;
+
+    // Если /api/chat возвращает JSON — пытаемся достать ответ
+    try {
+      const json = JSON.parse(rawAnswer);
+
+      answer =
+        json.reply ||
+        json.response ||
+        json.answer ||
+        json.message ||
+        json.text ||
+        rawAnswer;
+    } catch {
+      // Если это обычный текст — оставляем как есть
+    }
+
+    if (typeof answer !== "string") {
+      answer = JSON.stringify(answer);
+    }
+
+    answer = answer.trim();
+
+    if (!answer) {
+      return new Response("EVENT_RECEIVED", { status: 200 });
+    }
+
+    const phoneNumberId = process.env.WHATSAPP_PHONE_NUMBER_ID;
+    const accessToken = process.env.WHATSAPP_ACCESS_TOKEN;
+
+    // Версию Graph API потом зададим в Vercel.
+    // Если переменной пока нет — используется эта версия.
+    const apiVersion =
+      process.env.WHATSAPP_API_VERSION || "v23.0";
+
+    if (!phoneNumberId || !accessToken) {
+      console.error(
+        "Missing WHATSAPP_PHONE_NUMBER_ID or WHATSAPP_ACCESS_TOKEN"
+      );
+
+      return new Response("EVENT_RECEIVED", { status: 200 });
+    }
+
+    // Отправляем ответ обратно клиенту в WhatsApp
+    const whatsappResponse = await fetch(
+      `https://graph.facebook.com/${apiVersion}/${phoneNumberId}/messages`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          messaging_product: "whatsapp",
+          recipient_type: "individual",
+          to: from,
+          type: "text",
+          text: {
+            body: answer.slice(0, 4096),
+          },
+        }),
+      }
+    );
+
+    if (!whatsappResponse.ok) {
+      console.error(
+        "WhatsApp send error:",
+        whatsappResponse.status,
+        await whatsappResponse.text()
+      );
+    } else {
+      console.log("Mika AI reply sent to:", from);
+    }
+
+    return new Response("EVENT_RECEIVED", { status: 200 });
+  } catch (error) {
+    console.error("WhatsApp webhook error:", error);
+
+    // Meta должен получить 200, чтобы не повторять webhook снова и снова
+    return new Response("EVENT_RECEIVED", { status: 200 });
+  }
 }
