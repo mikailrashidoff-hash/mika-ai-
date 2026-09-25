@@ -62,7 +62,7 @@ export async function POST(request: Request) {
     },
   ],
 }),
-
+});
     if (!chatResponse.ok) {
       console.error(
         "Mika AI error:",
