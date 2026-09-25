@@ -10,7 +10,7 @@ declare global {
 }
 
 const APP_ID = "1325627329447199";
-const CONFIG_ID = "2162837427989005";
+const CONFIG_ID = "2368339940640761";
 
 export default function WhatsAppConnectPage() {
   const [sdkReady, setSdkReady] = useState(false);
