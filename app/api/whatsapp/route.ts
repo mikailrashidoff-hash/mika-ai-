@@ -54,12 +54,14 @@ export async function POST(request: Request) {
       headers: {
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({
-        message: userText,
-        userId: from,
-        channel: "whatsapp",
-      }),
-    });
+     body: JSON.stringify({
+  messages: [
+    {
+      role: "user",
+      text: userText,
+    },
+  ],
+}),
 
     if (!chatResponse.ok) {
       console.error(
